@@ -2,6 +2,7 @@ mod app;
 mod collector;
 mod config;
 mod demo;
+mod host_info;
 mod model;
 #[cfg(feature = "claude")]
 mod setup;
@@ -40,6 +41,9 @@ fn main() -> io::Result<()> {
         std::process::exit(1);
     }
 
+    // Load config once; it drives both the default theme and the hidden-agents list.
+    let cfg = config::load_config();
+
     // --theme flag > config file > default
     let initial_theme = std::env::args()
         .position(|a| a == "--theme")
@@ -70,7 +74,6 @@ fn main() -> io::Result<()> {
             })
         })
         .or_else(|| {
-            let cfg = config::load_config();
             theme::Theme::by_name(&cfg.theme)
         });
 
@@ -79,7 +82,10 @@ fn main() -> io::Result<()> {
 
     // --once flag: print snapshot and exit
     if std::env::args().any(|a| a == "--once") {
-        let mut app = App::new(initial_theme.unwrap_or_default());
+        let mut app = App::new_with_hidden(
+            initial_theme.unwrap_or_default(),
+            &cfg.hidden_agents,
+        );
         if demo_mode {
             demo::populate_demo(&mut app);
         } else {
@@ -103,7 +109,7 @@ fn main() -> io::Result<()> {
     stdout().execute(EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
 
-    let app_result = run_app(&mut terminal, demo_mode, initial_theme, exit_on_jump);
+    let app_result = run_app(&mut terminal, demo_mode, initial_theme, exit_on_jump, &cfg.hidden_agents);
 
     // Always attempt both cleanup steps regardless of app result
     let r1 = disable_raw_mode();
@@ -113,8 +119,8 @@ fn main() -> io::Result<()> {
     app_result.and(r1).and(r2)
 }
 
-fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, demo_mode: bool, initial_theme: Option<theme::Theme>, exit_on_jump: bool) -> io::Result<()> {
-    let mut app = App::new(initial_theme.unwrap_or_default());
+fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, demo_mode: bool, initial_theme: Option<theme::Theme>, exit_on_jump: bool, hidden_agents: &[String]) -> io::Result<()> {
+    let mut app = App::new_with_hidden(initial_theme.unwrap_or_default(), hidden_agents);
     if demo_mode {
         demo::populate_demo(&mut app);
     } else {
@@ -132,7 +138,20 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, demo_mode: boo
         let had_input = if event::poll(render_interval)? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    if app.config_open {
+                    if app.help_open {
+                        // Any key dismisses help.
+                        app.help_open = false;
+                    } else if app.view_open {
+                        match key.code {
+                            KeyCode::Esc | KeyCode::Char('v') => app.view_open = false,
+                            KeyCode::Char('T') => app.tree_view = !app.tree_view,
+                            KeyCode::Char('l') => app.toggle_timeline(),
+                            KeyCode::Char('f') => app.toggle_file_audit(),
+                            KeyCode::Char(c @ '1'..='5') => app.toggle_panel(c as u8 - b'0'),
+                            KeyCode::Char('t') => app.cycle_theme(),
+                            _ => {}
+                        }
+                    } else if app.config_open {
                         match key.code {
                             KeyCode::Esc | KeyCode::Char('q') => app.toggle_config(),
                             KeyCode::Down | KeyCode::Char('j') => app.config_select_next(),
@@ -163,6 +182,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, demo_mode: boo
                             KeyCode::Char('l') | KeyCode::Char('L') => app.toggle_timeline(),
                             KeyCode::Char(c @ '1'..='5') => app.toggle_panel(c as u8 - b'0'),
                             KeyCode::Char('c') => app.toggle_config(),
+                            KeyCode::Char('v') => app.toggle_view_menu(),
+                            KeyCode::Char('?') => app.toggle_help(),
                             KeyCode::Char('/') => app.filter_active = true,
                             KeyCode::Esc if !app.filter_text.is_empty() => app.clear_filter(),
                             KeyCode::Char('f') | KeyCode::Char('F') => app.toggle_file_audit(),

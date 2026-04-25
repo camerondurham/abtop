@@ -134,22 +134,38 @@ pub struct MultiCollector {
 const SLOW_POLL_INTERVAL: u32 = 5;
 
 impl MultiCollector {
+    /// Build a collector, skipping agents whose identifier is in `hidden`.
+    /// Identifiers are matched case-insensitively against each collector's
+    /// `agent_cli` name (e.g. `"claude"`, `"codex"`).
     // Per-agent cfg-gated push calls cannot use the `vec![]` macro.
     #[allow(clippy::vec_init_then_push)]
-    pub fn new() -> Self {
+    pub fn with_hidden(hidden: &[String]) -> Self {
+        let is_hidden = |name: &str| hidden.iter().any(|h| h.eq_ignore_ascii_case(name));
         let mut collectors: Vec<Box<dyn AgentCollector>> = Vec::new();
         #[cfg(feature = "claude")]
-        collectors.push(Box::new(ClaudeCollector::new()));
+        if !is_hidden("claude") {
+            collectors.push(Box::new(ClaudeCollector::new()));
+        }
         #[cfg(feature = "codex")]
-        collectors.push(Box::new(CodexCollector::new()));
+        if !is_hidden("codex") {
+            collectors.push(Box::new(CodexCollector::new()));
+        }
         #[cfg(feature = "gemini")]
-        collectors.push(Box::new(GeminiCollector::new()));
+        if !is_hidden("gemini") {
+            collectors.push(Box::new(GeminiCollector::new()));
+        }
         #[cfg(feature = "kiro")]
-        collectors.push(Box::new(KiroCollector::new()));
+        if !is_hidden("kiro") {
+            collectors.push(Box::new(KiroCollector::new()));
+        }
         #[cfg(feature = "opencode")]
-        collectors.push(Box::new(OpenCodeCollector::new()));
+        if !is_hidden("opencode") {
+            collectors.push(Box::new(OpenCodeCollector::new()));
+        }
         #[cfg(feature = "pi")]
-        collectors.push(Box::new(PiCollector::new()));
+        if !is_hidden("pi") {
+            collectors.push(Box::new(PiCollector::new()));
+        }
         Self {
             collectors,
             tick_count: SLOW_POLL_INTERVAL, // trigger on first tick
@@ -274,6 +290,82 @@ impl MultiCollector {
         self.orphan_ports.sort_by_key(|o| o.port);
 
         all
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn enabled_collector_count() -> usize {
+        let mut count = 0;
+        #[cfg(feature = "claude")]
+        {
+            count += 1;
+        }
+        #[cfg(feature = "codex")]
+        {
+            count += 1;
+        }
+        #[cfg(feature = "gemini")]
+        {
+            count += 1;
+        }
+        #[cfg(feature = "kiro")]
+        {
+            count += 1;
+        }
+        #[cfg(feature = "opencode")]
+        {
+            count += 1;
+        }
+        #[cfg(feature = "pi")]
+        {
+            count += 1;
+        }
+        count
+    }
+
+    #[test]
+    fn with_hidden_empty_keeps_all_collectors() {
+        let mc = MultiCollector::with_hidden(&[]);
+        assert_eq!(mc.collectors.len(), enabled_collector_count());
+    }
+
+    #[test]
+    fn with_hidden_codex_drops_codex_only() {
+        let mc = MultiCollector::with_hidden(&["codex".to_string()]);
+        let expected = enabled_collector_count() - usize::from(cfg!(feature = "codex"));
+        assert_eq!(mc.collectors.len(), expected);
+    }
+
+    #[test]
+    fn with_hidden_is_case_insensitive() {
+        let mc = MultiCollector::with_hidden(&["CODEX".to_string()]);
+        let expected = enabled_collector_count() - usize::from(cfg!(feature = "codex"));
+        assert_eq!(mc.collectors.len(), expected);
+        let mc = MultiCollector::with_hidden(&["Claude".to_string()]);
+        let expected = enabled_collector_count() - usize::from(cfg!(feature = "claude"));
+        assert_eq!(mc.collectors.len(), expected);
+    }
+
+    #[test]
+    fn with_hidden_unknown_names_are_ignored() {
+        let mc = MultiCollector::with_hidden(&["unknown".to_string(), "missing".to_string()]);
+        assert_eq!(mc.collectors.len(), enabled_collector_count());
+    }
+
+    #[test]
+    fn with_hidden_all_agents_yields_empty() {
+        let mc = MultiCollector::with_hidden(&[
+            "claude".to_string(),
+            "codex".to_string(),
+            "gemini".to_string(),
+            "kiro".to_string(),
+            "opencode".to_string(),
+            "pi".to_string(),
+        ]);
+        assert!(mc.collectors.is_empty());
     }
 }
 

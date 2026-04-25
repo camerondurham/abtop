@@ -1135,7 +1135,10 @@ fn file_identity(path: &Path) -> (u64, u64) {
     fs::metadata(path)
         .ok()
         .map(|m| {
+            #[cfg(unix)]
             let ino = m.ino();
+            #[cfg(not(unix))]
+            let ino = 0;
             let mtime_ns = m
                 .modified()
                 .ok()
@@ -2074,6 +2077,7 @@ n/Users/bob/.claude-alt/projects/-Users-bob-project/session.jsonl
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_find_session_file_for_pid_rejects_symlinked_session_files() {
         let temp = tempfile::tempdir().unwrap();
         let sessions = temp.path().join("sessions");
@@ -2154,6 +2158,7 @@ n/Users/bob/.claude-alt/projects/-Users-bob-project/session.jsonl
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_resolve_project_dir_rejects_symlinked_matches() {
         let temp = tempfile::tempdir().unwrap();
         let profile = temp.path().join(".claude-work");
